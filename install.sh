@@ -1,0 +1,84 @@
+#!/usr/bin/env bash
+set -euo pipefail
+export DEBIAN_FRONTEND=noninteractive
+[ "$(id -u)" -eq 0 ] || { echo "请使用 root 用户运行"; exit 1; }
+BASE="$(cd "$(dirname "$0")" && pwd)"
+apt-get update -qq
+apt-get install -y -qq curl ca-certificates nginx certbot libnginx-mod-stream openssl python3 >/dev/null
+if ! command -v stalwart >/dev/null 2>&1; then
+  curl --proto '=https' --tlsv1.2 -sSf https://get.stalw.art/install.sh -o /tmp/stalwart-install.sh
+  sh /tmp/stalwart-install.sh
+fi
+mkdir -p /etc/stalwart
+ENV_FILE=/etc/stalwart/stalwart.env
+touch "$ENV_FILE"
+sed -i '/^STALWART_RECOVERY_ADMIN=/d' "$ENV_FILE"
+echo 'STALWART_RECOVERY_ADMIN=admin:admin123' >>"$ENV_FILE"
+chmod 640 "$ENV_FILE"
+chown root:stalwart "$ENV_FILE" 2>/dev/null || true
+systemctl enable --now stalwart
+systemctl restart stalwart
+sleep 4
+install -d -o www-data -g www-data -m 750 /opt/mailpanel /var/lib/mailpanel
+install -o www-data -g www-data -m 750 "$BASE/app.py" /opt/mailpanel/app.py
+SECRET="$(openssl rand -hex 32)"
+PUBLIC_IP="$(curl -4fsS --max-time 8 https://api.ipify.org 2>/dev/null || hostname -I | awk '{print $1}')"
+cat >/etc/mailpanel.env <<EOF
+MAILPANEL_USER=admin
+MAILPANEL_PASSWORD=admin123
+MAILPANEL_SECRET=$SECRET
+MAILPANEL_PUBLIC_IP=$PUBLIC_IP
+STALWART_USER=admin
+STALWART_PASSWORD=admin123
+EOF
+chmod 600 /etc/mailpanel.env
+cat >/etc/systemd/system/mailpanel.service <<'EOF'
+[Unit]
+Description=Rykvo Mail Management Panel
+After=network.target stalwart.service
+Requires=stalwart.service
+[Service]
+Type=simple
+User=www-data
+Group=www-data
+EnvironmentFile=/etc/mailpanel.env
+ExecStart=/usr/bin/python3 /opt/mailpanel/app.py
+Restart=on-failure
+RestartSec=3
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/lib/mailpanel
+[Install]
+WantedBy=multi-user.target
+EOF
+cat >/etc/nginx/sites-available/mailpanel <<'EOF'
+server {
+    listen 80 default_server;
+    listen [::]:80 default_server;
+    server_name _;
+    client_max_body_size 2m;
+    location ^~ /.well-known/acme-challenge/ { root /var/www/mailpanel-acme; }
+    location / {
+        proxy_pass http://127.0.0.1:8090;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+    }
+}
+EOF
+rm -f /etc/nginx/sites-enabled/default
+ln -sfn /etc/nginx/sites-available/mailpanel /etc/nginx/sites-enabled/mailpanel
+bash "$BASE/install_cert_helper.sh"
+systemctl daemon-reload
+systemctl enable --now mailpanel nginx
+systemctl restart mailpanel nginx
+if command -v ufw >/dev/null 2>&1; then
+  for port in 22 25 80 443 110 143 465 587 993 995 4190; do ufw allow "$port/tcp" >/dev/null 2>&1 || true; done
+fi
+rm -f /tmp/stalwart-install.sh /tmp/mailpanel-certbot.log
+sleep 2
+curl -fsS http://127.0.0.1/health >/dev/null
+printf '\n%s\n' 'Rykvo 邮局安装完成' '后台：http://服务器IP/gly' '账号：admin' '密码：admin123' '登录后请立即在“系统设置”修改管理员账号和密码。'
