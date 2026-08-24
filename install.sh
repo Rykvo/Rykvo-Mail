@@ -21,6 +21,12 @@ systemctl restart stalwart
 sleep 4
 STALWART_API_USER=admin
 STALWART_API_PASSWORD=admin123
+if [ -f /etc/mailpanel.env ]; then
+  # 更新安装时沿用已经生成的 Stalwart 永久管理员凭据。
+  . /etc/mailpanel.env
+  STALWART_API_USER="${STALWART_USER:-admin}"
+  STALWART_API_PASSWORD="${STALWART_PASSWORD:-admin123}"
+fi
 if [ ! -f /etc/stalwart/config.json ]; then
 python3 <<'PY' >/tmp/stalwart-bootstrap-result
 import urllib.request,json,base64
