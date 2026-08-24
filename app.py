@@ -127,7 +127,7 @@ def users():
   pos+=len(part)
  out=[]
  for n in range(0,len(ids),50):out.extend(resp(call([["x:Account/get",{"ids":ids[n:n+50]},"g"]]),"x:Account/get").get("list",[]))
- return [x for x in out if x.get("@type")=="User"]
+ return [x for x in out if x.get("@type")=="User" and (x.get("roles")or{}).get("@type")!="Admin"]
 def user_obj(n,d,p,q):
  return {"@type":"User","aliases":{},"credentials":{"0":{"@type":"Password","secret":password_secret(p)}},"domainId":d,"encryptionAtRest":{"@type":"Disabled"},"memberGroupIds":{},"name":n,"permissions":{"@type":"Inherit"},"quotas":{"maxDiskQuota":int(q)*1048576},"roles":{"@type":"User"}}
 def add_user(n,d,p,q):
@@ -413,6 +413,7 @@ class H(BaseHTTPRequestHandler):
    if p.startswith('/settings'):return self.redir('/settings?tab=account&err='+parse.quote(friendly_error(x)))
    self.fail(x,'domains')
 if __name__=='__main__':ThreadingHTTPServer((HOST,PORT),H).serve_forever()
+
 
 
 
