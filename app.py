@@ -424,7 +424,14 @@ class H(BaseHTTPRequestHandler):
    if p.startswith('/users'):return self.redir('/users?err='+parse.quote(friendly_error(x)))
    if p.startswith('/settings'):return self.redir('/settings?tab=account&err='+parse.quote(friendly_error(x)))
    self.fail(x,'domains')
-if __name__=='__main__':ThreadingHTTPServer((HOST,PORT),H).serve_forever()
+def configure_accept_all_mail():
+ try:
+  call([["x:SpamSettings/set",{"update":{"singleton":{"enable":False,"greylistFor":None,"scoreDiscard":0,"scoreReject":0}}},"s"]])
+ except Exception:pass
+if __name__=='__main__':
+ configure_accept_all_mail()
+ ThreadingHTTPServer((HOST,PORT),H).serve_forever()
+
 
 
 
