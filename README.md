@@ -2,7 +2,7 @@
 
 适用于 Ubuntu 22.04 / 24.04，请使用 root 用户安装。
 
-## 一键安装
+## 一键部署
 
 ```bash
 apt-get update && apt-get install -y git && cd /root && (test -d Rykvo-Mail/.git && git -C Rykvo-Mail pull --ff-only || git clone https://github.com/Rykvo/Rykvo-Mail.git) && bash /root/Rykvo-Mail/install.sh
@@ -23,7 +23,7 @@ apt-get update && apt-get install -y git && cd /root && (test -d Rykvo-Mail/.git
 cd /root/Rykvo-Mail && git pull --ff-only && bash install.sh
 ```
 
-## 完全卸载
+## 卸载
 
 ```bash
 cd /root/Rykvo-Mail && git pull --ff-only && bash uninstall.sh --yes
