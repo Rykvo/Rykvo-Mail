@@ -78,6 +78,18 @@ def call_raw(calls):
  body={"using":["urn:ietf:params:jmap:core","urn:stalwart:jmap"],"methodCalls":calls};auth=base64.b64encode(f"{STALWART_USER}:{STALWART_PASSWORD}".encode()).decode()
  req=request.Request(JMAP,data=json.dumps(body).encode(),headers={"Content-Type":"application/json","Authorization":"Basic "+auth})
  with request.urlopen(req,timeout=35) as r:return json.loads(r.read())
+def sync_sender_name(email_addr,display_name):
+ """同步 JMAP 发件身份名称；SMTP 客户端读取该身份时会显示此名称。"""
+ try:
+  body={"using":["urn:ietf:params:jmap:core","urn:ietf:params:jmap:mail","urn:ietf:params:jmap:submission"],"methodCalls":[["Identity/query",{},"q"]]}
+  login=f"{email_addr}%{STALWART_USER}";auth=base64.b64encode(f"{login}:{STALWART_PASSWORD}".encode()).decode()
+  def ucall(method_calls):
+   body["methodCalls"]=method_calls;req=request.Request(JMAP,data=json.dumps(body).encode(),headers={"Content-Type":"application/json","Authorization":"Basic "+auth})
+   with request.urlopen(req,timeout=35) as r:return json.loads(r.read())
+  q=resp(ucall([["Identity/query",{},"q"]]),"Identity/query");ids=q.get("ids",[])
+  if ids:ucall([["Identity/set",{"update":{str(ids[0]):{"name":display_name}}},"s"]])
+  else:ucall([["Identity/set",{"create":{"new":{"name":display_name,"email":email_addr,"replyTo":[],"bcc":[],"textSignature":"","htmlSignature":""}}},"s"]])
+ except Exception:pass
 def resp(o,n):
  for x in o.get("methodResponses",[]):
   if x[0]==n:return x[1]
@@ -128,13 +140,13 @@ def users():
  out=[]
  for n in range(0,len(ids),50):out.extend(resp(call([["x:Account/get",{"ids":ids[n:n+50]},"g"]]),"x:Account/get").get("list",[]))
  return [x for x in out if x.get("@type")=="User" and (x.get("roles")or{}).get("@type")!="Admin"]
-def user_obj(n,d,p,q):
- return {"@type":"User","aliases":{},"credentials":{"0":{"@type":"Password","secret":password_secret(p)}},"domainId":d,"encryptionAtRest":{"@type":"Disabled"},"memberGroupIds":{},"name":n,"permissions":{"@type":"Inherit"},"quotas":{"maxDiskQuota":int(q)*1048576},"roles":{"@type":"User"}}
-def add_user(n,d,p,q):
- x=user_obj(n,d,p,q)
+def user_obj(n,d,p,q,display=""):
+ return {"@type":"User","aliases":{},"credentials":{"0":{"@type":"Password","secret":password_secret(p)}},"domainId":d,"encryptionAtRest":{"@type":"Disabled"},"memberGroupIds":{},"name":n,"description":display or n,"permissions":{"@type":"Inherit"},"quotas":{"maxDiskQuota":int(q)*1048576},"roles":{"@type":"User"}}
+def add_user(n,d,p,q,display=""):
+ x=user_obj(n,d,p,q,display)
  return resp(call([["x:Account/set",{"create":{"new":x}},"s"]]),"x:Account/set")["created"]["new"]["id"]
-def update_user(i,p,q):
- x={"quotas":{"maxDiskQuota":int(q)*1048576}}
+def update_user(i,p,q,display=""):
+ x={"quotas":{"maxDiskQuota":int(q)*1048576},"description":display}
  if p:x["credentials"]={"0":{"@type":"Password","secret":password_secret(p)}}
  call([["x:Account/set",{"update":{i:x}},"s"]])
 def schedule_purge(delay=60):
@@ -196,7 +208,7 @@ def bulk_worker(jid,domain_id,raw):
  total=len(lines);done=len(errors);made=0
  with JOBS_LOCK:JOBS[jid].update(total=total,done=done,made=0,errors=errors[:20])
  for off in range(0,len(valid),25):
-  chunk=valid[off:off+25];creates={f'u{k}':user_obj(v[2],domain_id,v[3],v[4]) for k,v in enumerate(chunk)}
+  chunk=valid[off:off+25];creates={f'u{k}':user_obj(v[2],domain_id,v[3],v[4],v[1]) for k,v in enumerate(chunk)}
   try:
    created=resp(call([["x:Account/set",{"create":creates},"b"]]),"x:Account/set").get('created',{});st=state();names=st.setdefault('display_names',{});vault=st.setdefault('password_vault',{})
    for k,v in enumerate(chunk):
@@ -372,13 +384,13 @@ class H(BaseHTTPRequestHandler):
     if not re.fullmatch(r'[a-z0-9][a-z0-9._+-]{0,63}',n):raise ValueError('邮箱账号格式错误')
     if not pw:raise ValueError('密码不能为空')
     if not display:raise ValueError('用户名不能为空')
-    uid=str(add_user(n,str(f.get('domain_id')),pw,int(f.get('quota',1024))));s=state();s.setdefault('display_names',{})[uid]=display;s.setdefault('password_vault',{})[uid]=seal(pw);save(s);return self.redir('/users?msg='+parse.quote('用户创建成功'))
+    did=str(f.get('domain_id'));uid=str(add_user(n,did,pw,int(f.get('quota',1024)),display));s=state();s.setdefault('display_names',{})[uid]=display;s.setdefault('password_vault',{})[uid]=seal(pw);save(s);d=domain(did);sync_sender_name(f"{n}@{d.get('name')}",display) if d else None;return self.redir('/users?msg='+parse.quote('用户创建成功'))
    if p=="/users/edit":
     uid=str(f.get('id'));display=str(f.get('display_name','')).strip()
     if not display:raise ValueError('用户名不能为空')
-    pw=str(f.get('password',''));update_user(uid,pw,int(f.get('quota',1024)));s=state();s.setdefault('display_names',{})[uid]=display
+    pw=str(f.get('password',''));u=next((x for x in users() if str(x.get('id'))==uid),None);update_user(uid,pw,int(f.get('quota',1024)),display);s=state();s.setdefault('display_names',{})[uid]=display
     if pw:s.setdefault('password_vault',{})[uid]=seal(pw)
-    save(s);return self.redir('/users?msg='+parse.quote('用户已更新'))
+    save(s);d=domain(str(u.get('domainId'))) if u else None;sync_sender_name(f"{u.get('name')}@{d.get('name')}",display) if u and d else None;return self.redir('/users?msg='+parse.quote('用户已更新'))
    if p=="/users/delete":
     ids=f.get('ids',[]);ids=[ids]if isinstance(ids,str)else ids
     if not ids:ids=[str(x.get('id')) for x in users()]
