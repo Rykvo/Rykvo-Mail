@@ -75,6 +75,6 @@ cd /root/Rykvo-Mail && git pull --ff-only && bash install.sh
 cd /root/Rykvo-Mail && git pull --ff-only && bash uninstall.sh --yes
 ```
 
-为避免误删其他网站的证书，卸载后 Let's Encrypt 证书备份会保留在 `/etc/letsencrypt`。
+卸载会同时删除邮件服务、管理面板、Nginx、Certbot、开放的邮件端口规则和全部 Let's Encrypt 证书。
 
 面板配置和邮件数据保存在服务器数据目录中，代码仓库不包含任何用户、域名、邮件或测试数据。
