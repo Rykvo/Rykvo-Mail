@@ -84,6 +84,23 @@ ReadWritePaths=/var/lib/mailpanel
 [Install]
 WantedBy=multi-user.target
 EOF
+touch /var/lib/mailpanel/reload-stalwart
+chown www-data:www-data /var/lib/mailpanel/reload-stalwart
+cat >/etc/systemd/system/mailpanel-stalwart-reload.path <<'EOF'
+[Unit]
+Description=Watch Rykvo sender-name updates
+[Path]
+PathChanged=/var/lib/mailpanel/reload-stalwart
+[Install]
+WantedBy=multi-user.target
+EOF
+cat >/etc/systemd/system/mailpanel-stalwart-reload.service <<'EOF'
+[Unit]
+Description=Reload Stalwart sender-name rules
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/systemctl restart stalwart.service
+EOF
 cat >/etc/nginx/sites-available/mailpanel <<'EOF'
 server {
     listen 80 default_server;
@@ -104,7 +121,7 @@ rm -f /etc/nginx/sites-enabled/default
 ln -sfn /etc/nginx/sites-available/mailpanel /etc/nginx/sites-enabled/mailpanel
 bash "$BASE/install_cert_helper.sh"
 systemctl daemon-reload
-systemctl enable --now mailpanel nginx
+systemctl enable --now mailpanel nginx mailpanel-stalwart-reload.path
 systemctl restart mailpanel nginx
 if command -v ufw >/dev/null 2>&1; then
   for port in 22 25 80 443 110 143 465 587 993 995 4190; do ufw allow "$port/tcp" >/dev/null 2>&1 || true; done

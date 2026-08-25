@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-import base64,hashlib,hmac,html,json,os,re,secrets,ssl,time,threading,subprocess
+import base64,hashlib,hmac,html,json,os,re,secrets,ssl,time,threading
 from email.header import Header
 from http import cookies
 from http.server import BaseHTTPRequestHandler,ThreadingHTTPServer
@@ -106,7 +106,12 @@ def rebuild_sender_name_script(restart=True):
   if old:call([[typ+'/set',{'update':{str(old['id']):{'contents':contents,'isActive':True}}},'s']])
   else:call([[typ+'/set',{'create':{'new':{'name':'rykvo-sender-name','description':'Rykvo sender display names','isActive':True,'contents':contents}}},'s']])
   call([['x:MtaStageData/set',{'update':{'singleton':{'script':{'match':{'0':{'if':'!is_empty(authenticated_as)','then':"'rykvo-sender-name'"}},'else':'false'}}}},'s']])
-  if restart:threading.Timer(.8,lambda:subprocess.run(['systemctl','restart','stalwart'],stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL)).start()
+  if restart:
+   def notify_reload():
+    try:
+     with open('/var/lib/mailpanel/reload-stalwart','w') as f:f.write(str(time.time()))
+    except Exception as ex:print('sender-name reload:',ex,flush=True)
+   threading.Timer(.8,notify_reload).start()
  except Exception as ex:print('sender-name sync:',ex,flush=True)
 def resp(o,n):
  for x in o.get("methodResponses",[]):
