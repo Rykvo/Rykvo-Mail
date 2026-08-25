@@ -462,10 +462,19 @@ def configure_accept_all_mail():
  try:
   call([["x:SpamSettings/set",{"update":{"singleton":{"enable":False,"greylistFor":None,"scoreDiscard":0,"scoreReject":0}}},"s"]])
  except Exception:pass
+def configure_standard_listeners():
+ try:
+  typ='x:NetworkListener';q=resp(call([[typ+'/query',{},'q']]),typ+'/query');objs=resp(call([[typ+'/get',{'ids':q.get('ids',[])},'g']]),typ+'/get').get('list',[]);existing={x.get('name') for x in objs};creates={}
+  for name,proto,port in [('imap','imap',143),('pop3','pop3',110),('submission','smtp',587)]:
+   if name not in existing:creates[name]={'name':name,'bind':{f'[::]:{port}':True},'protocol':proto,'useTls':True,'tlsImplicit':False,'overrideProxyTrustedNetworks':{},'tlsDisableCipherSuites':{},'tlsDisableProtocols':{}}
+  if creates:
+   call([[typ+'/set',{'create':creates},'s']])
+   with open('/var/lib/mailpanel/reload-stalwart','w') as f:f.write(str(time.time()))
+ except Exception as ex:print('listener setup:',ex,flush=True)
 if __name__=='__main__':
  configure_accept_all_mail()
+ configure_standard_listeners()
  ThreadingHTTPServer((HOST,PORT),H).serve_forever()
-
 
 
 

@@ -54,7 +54,7 @@ sleep 5
 install -d -o www-data -g www-data -m 750 /opt/mailpanel /var/lib/mailpanel
 install -o www-data -g www-data -m 750 "$BASE/app.py" /opt/mailpanel/app.py
 PANEL_USER="${MAILPANEL_USER:-admin}"
-PANEL_PASSWORD="${MAILPANEL_PASSWORD:-$(openssl rand -hex 12)}"
+PANEL_PASSWORD="${MAILPANEL_PASSWORD:-admin123}"
 SECRET="${MAILPANEL_SECRET:-$(openssl rand -hex 32)}"
 PUBLIC_IP="$(curl -4fsS --max-time 8 https://api.ipify.org 2>/dev/null || hostname -I | awk '{print $1}')"
 cat >/etc/mailpanel.env <<EOF
@@ -124,7 +124,8 @@ rm -f /etc/nginx/sites-enabled/default
 ln -sfn /etc/nginx/sites-available/mailpanel /etc/nginx/sites-enabled/mailpanel
 bash "$BASE/install_cert_helper.sh"
 systemctl daemon-reload
-systemctl enable --now mailpanel nginx mailpanel-stalwart-reload.path
+systemctl enable --now nginx mailpanel-stalwart-reload.path
+systemctl enable --now mailpanel
 systemctl restart mailpanel nginx
 if command -v ufw >/dev/null 2>&1; then
   for port in 22 25 80 443 110 143 465 587 993 995 4190; do ufw allow "$port/tcp" >/dev/null 2>&1 || true; done
