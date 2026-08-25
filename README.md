@@ -41,14 +41,16 @@ apt-get update && apt-get install -y git && cd /root && (test -d Rykvo-Mail/.git
 http://服务器IP/gly
 ```
 
-默认账号：
+安装完成后，终端会显示登录信息：
 
 ```text
 账号：admin
-密码：admin123
+密码：安装时随机生成
 ```
 
 首次登录后，请立即在“系统设置”中修改管理员账号和密码。
+
+请同时在服务器商后台将 PTR/rDNS 设置为 `mail.你的域名`，以提高外部邮箱的投递成功率。
 
 ## 基本使用流程
 

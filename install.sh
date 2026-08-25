@@ -11,9 +11,10 @@ if ! command -v stalwart >/dev/null 2>&1; then
 fi
 mkdir -p /etc/stalwart
 ENV_FILE=/etc/stalwart/stalwart.env
+RECOVERY_PASSWORD="$(openssl rand -hex 24)"
 touch "$ENV_FILE"
 sed -i '/^STALWART_RECOVERY_ADMIN=/d' "$ENV_FILE"
-echo 'STALWART_RECOVERY_ADMIN=admin:admin123' >>"$ENV_FILE"
+echo "STALWART_RECOVERY_ADMIN=admin:$RECOVERY_PASSWORD" >>"$ENV_FILE"
 chmod 640 "$ENV_FILE"
 chown root:stalwart "$ENV_FILE" 2>/dev/null || true
 systemctl enable --now stalwart
@@ -28,9 +29,9 @@ if [ -f /etc/mailpanel.env ]; then
   STALWART_API_PASSWORD="${STALWART_PASSWORD:-admin123}"
 fi
 if [ ! -f /etc/stalwart/config.json ]; then
-python3 <<'PY' >/tmp/stalwart-bootstrap-result
-import urllib.request,json,base64
-auth=base64.b64encode(b"admin:admin123").decode()
+STALWART_RECOVERY_PASSWORD="$RECOVERY_PASSWORD" python3 <<'PY' >/tmp/stalwart-bootstrap-result
+import urllib.request,json,base64,os
+auth=base64.b64encode(("admin:"+os.environ["STALWART_RECOVERY_PASSWORD"]).encode()).decode()
 headers={"Content-Type":"application/json","Authorization":"Basic "+auth}
 url="http://127.0.0.1:8080/jmap"
 def api(calls):
@@ -46,17 +47,19 @@ PY
  STALWART_API_USER="$(sed -n '1p' /tmp/stalwart-bootstrap-result)"
  STALWART_API_PASSWORD="$(sed -n '2p' /tmp/stalwart-bootstrap-result)"
  sleep 8
- sed -i '/^STALWART_RECOVERY_ADMIN=/d' "$ENV_FILE"
- systemctl restart stalwart
- sleep 5
 fi
+sed -i '/^STALWART_RECOVERY_ADMIN=/d' "$ENV_FILE"
+systemctl restart stalwart
+sleep 5
 install -d -o www-data -g www-data -m 750 /opt/mailpanel /var/lib/mailpanel
 install -o www-data -g www-data -m 750 "$BASE/app.py" /opt/mailpanel/app.py
-SECRET="$(openssl rand -hex 32)"
+PANEL_USER="${MAILPANEL_USER:-admin}"
+PANEL_PASSWORD="${MAILPANEL_PASSWORD:-$(openssl rand -hex 12)}"
+SECRET="${MAILPANEL_SECRET:-$(openssl rand -hex 32)}"
 PUBLIC_IP="$(curl -4fsS --max-time 8 https://api.ipify.org 2>/dev/null || hostname -I | awk '{print $1}')"
 cat >/etc/mailpanel.env <<EOF
-MAILPANEL_USER=admin
-MAILPANEL_PASSWORD=admin123
+MAILPANEL_USER=$PANEL_USER
+MAILPANEL_PASSWORD=$PANEL_PASSWORD
 MAILPANEL_SECRET=$SECRET
 MAILPANEL_PUBLIC_IP=$PUBLIC_IP
 STALWART_USER=$STALWART_API_USER
@@ -129,4 +132,4 @@ fi
 rm -f /tmp/stalwart-install.sh /tmp/mailpanel-certbot.log /tmp/stalwart-bootstrap-result
 sleep 2
 curl -fsS http://127.0.0.1/health >/dev/null
-printf '\n%s\n' 'Rykvo 邮局安装完成' "后台：http://$PUBLIC_IP/gly" '账号：admin' '密码：admin123' '登录后请立即在“系统设置”修改管理员账号和密码。'
+printf '\n%s\n' 'Rykvo 邮局安装完成' "后台：http://$PUBLIC_IP/gly" "账号：$PANEL_USER" "密码：$PANEL_PASSWORD" '登录后请立即在“系统设置”修改管理员账号和密码。'
