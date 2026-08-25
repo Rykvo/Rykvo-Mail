@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
-import base64,hashlib,hmac,html,json,os,re,secrets,ssl,time,threading
+import base64,hashlib,hmac,html,json,os,re,secrets,ssl,time,threading,subprocess
+from email.header import Header
 from http import cookies
 from http.server import BaseHTTPRequestHandler,ThreadingHTTPServer
 from urllib import request,parse
@@ -90,6 +91,23 @@ def sync_sender_name(email_addr,display_name):
   if ids:ucall([["Identity/set",{"update":{str(ids[0]):{"name":display_name}}},"s"]])
   else:ucall([["Identity/set",{"create":{"new":{"name":display_name,"email":email_addr,"replyTo":[],"bcc":[],"textSignature":"","htmlSignature":""}}},"s"]])
  except Exception:pass
+def rebuild_sender_name_script(restart=True):
+ """Rebuild the trusted SMTP Sieve map so every authenticated sender gets its saved display name."""
+ try:
+  ds={str(x.get('id')):x.get('name','') for x in domains()};st=state();names=st.get('display_names',{})
+  lines=['require ["variables", "editheader"];']
+  for u in users():
+   uid=str(u.get('id'));addr=f"{u.get('name')}@{ds.get(str(u.get('domainId')),'')}";name=str(names.get(uid,u.get('name',''))).strip()
+   if not name or '@' not in addr:continue
+   qaddr=addr.replace('\\','\\\\').replace('"','\\"');qfrom=f"{Header(name,'utf-8').encode()} <{addr}>".replace('\\','\\\\').replace('"','\\"')
+   lines+= [f'if string :is "${{env.authenticated_as}}" "{qaddr}" {{', '  deleteheader "From";', f'  addheader "From" "{qfrom}";', '}']
+  contents='\n'.join(lines);typ='x:SieveSystemScript';q=resp(call([[typ+'/query',{},'q']]),typ+'/query');ids=q.get('ids',[])
+  objs=resp(call([[typ+'/get',{'ids':ids},'g']]),typ+'/get').get('list',[]);old=next((x for x in objs if x.get('name')=='rykvo-sender-name'),None)
+  if old:call([[typ+'/set',{'update':{str(old['id']):{'contents':contents,'isActive':True}}},'s']])
+  else:call([[typ+'/set',{'create':{'new':{'name':'rykvo-sender-name','description':'Rykvo sender display names','isActive':True,'contents':contents}}},'s']])
+  call([['x:MtaStageData/set',{'update':{'singleton':{'script':{'match':{'0':{'if':'!is_empty(authenticated_as)','then':"'rykvo-sender-name'"}},'else':'false'}}}},'s']])
+  if restart:threading.Timer(.8,lambda:subprocess.run(['systemctl','restart','stalwart'],stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL)).start()
+ except Exception as ex:print('sender-name sync:',ex,flush=True)
 def resp(o,n):
  for x in o.get("methodResponses",[]):
   if x[0]==n:return x[1]
@@ -195,6 +213,7 @@ def delete_worker(jid,ids):
  for uid in done:dn.pop(str(uid),None);vault.pop(str(uid),None)
  save(st)
  with JOBS_LOCK:JOBS[jid].update(finished=True,done=len(ids),deleted=len(done),failed=len(failed))
+ rebuild_sender_name_script()
 def bulk_worker(jid,domain_id,raw):
  lines=[(n,x.strip()) for n,x in enumerate(raw.splitlines(),1) if x.strip()];valid=[];errors=[]
  for no,line in lines:
@@ -221,6 +240,7 @@ def bulk_worker(jid,domain_id,raw):
   done+=len(chunk)
   with JOBS_LOCK:JOBS[jid].update(done=min(done,total),made=made,errors=errors[:20])
  with JOBS_LOCK:JOBS[jid].update(done=total,made=made,finished=True,errors=errors[:20])
+ rebuild_sender_name_script()
 def doh(n,t):
  req=request.Request("https://cloudflare-dns.com/dns-query?"+parse.urlencode({"name":n,"type":t}),headers={"Accept":"application/dns-json"})
  with request.urlopen(req,timeout=12,context=ssl.create_default_context()) as r:o=json.loads(r.read())
@@ -384,13 +404,13 @@ class H(BaseHTTPRequestHandler):
     if not re.fullmatch(r'[a-z0-9][a-z0-9._+-]{0,63}',n):raise ValueError('邮箱账号格式错误')
     if not pw:raise ValueError('密码不能为空')
     if not display:raise ValueError('用户名不能为空')
-    did=str(f.get('domain_id'));uid=str(add_user(n,did,pw,int(f.get('quota',1024)),display));s=state();s.setdefault('display_names',{})[uid]=display;s.setdefault('password_vault',{})[uid]=seal(pw);save(s);d=domain(did);sync_sender_name(f"{n}@{d.get('name')}",display) if d else None;return self.redir('/users?msg='+parse.quote('用户创建成功'))
+    did=str(f.get('domain_id'));uid=str(add_user(n,did,pw,int(f.get('quota',1024)),display));s=state();s.setdefault('display_names',{})[uid]=display;s.setdefault('password_vault',{})[uid]=seal(pw);save(s);d=domain(did);sync_sender_name(f"{n}@{d.get('name')}",display) if d else None;rebuild_sender_name_script();return self.redir('/users?msg='+parse.quote('用户创建成功'))
    if p=="/users/edit":
     uid=str(f.get('id'));display=str(f.get('display_name','')).strip()
     if not display:raise ValueError('用户名不能为空')
     pw=str(f.get('password',''));u=next((x for x in users() if str(x.get('id'))==uid),None);update_user(uid,pw,int(f.get('quota',1024)),display);s=state();s.setdefault('display_names',{})[uid]=display
     if pw:s.setdefault('password_vault',{})[uid]=seal(pw)
-    save(s);d=domain(str(u.get('domainId'))) if u else None;sync_sender_name(f"{u.get('name')}@{d.get('name')}",display) if u and d else None;return self.redir('/users?msg='+parse.quote('用户已更新'))
+    save(s);d=domain(str(u.get('domainId'))) if u else None;sync_sender_name(f"{u.get('name')}@{d.get('name')}",display) if u and d else None;rebuild_sender_name_script();return self.redir('/users?msg='+parse.quote('用户已更新'))
    if p=="/users/delete":
     ids=f.get('ids',[]);ids=[ids]if isinstance(ids,str)else ids
     if not ids:ids=[str(x.get('id')) for x in users()]
@@ -398,7 +418,7 @@ class H(BaseHTTPRequestHandler):
     done,failed=destroy_accounts(ids)
     if done:schedule_purge()
     s=state();dn=s.setdefault('display_names',{});vault=s.setdefault('password_vault',{});[dn.pop(str(i),None) for i in done];[vault.pop(str(i),None) for i in done];save(s)
-    msg=f'已删除 {len(done)} 个用户'+(f'，{len(failed)} 个未删除' if failed else '');return self.redir('/users?msg='+parse.quote(msg))
+    rebuild_sender_name_script();msg=f'已删除 {len(done)} 个用户'+(f'，{len(failed)} 个未删除' if failed else '');return self.redir('/users?msg='+parse.quote(msg))
    if p=="/settings/panel":
     pd=str(f.get('panel_domain','')).strip().lower().rstrip('.');s=state();s['panel_domain']=pd;save(s);return self.redir('/settings?tab=panel&msg='+parse.quote('后台域名已保存'))
    if p=="/settings/retention":
